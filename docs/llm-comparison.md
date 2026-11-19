@@ -6,8 +6,8 @@ I compared five models from three providers before choosing one for this project
 |---|---|---:|---:|---|---|
 | OpenAI | `gpt-4o-mini` | $0.15 | $0.60 | `response_format=json_object` | Cheap, widely available, reports token usage |
 | OpenAI | `gpt-4.1-mini` | $0.40 | $1.60 | Structured JSON supported | Stronger model, costs more than the one above |
-| Google | `gemini-1.5-flash` | $0.075 | $0.30 | Native JSON MIME type | Cheapest option, free development tier available |
-| Google | `gemini-1.5-pro` | $1.25 | $5.00 | Native JSON MIME type | Higher capability, much higher cost |
+| Google | `gemini-3.5-flash-lite` | $0.30 | $2.50 | Native JSON MIME type | Free tier with no billing account; cheap paid tier |
+| Google | `gemini-3.1-pro-preview` | $2.00 | $12.00 | Native JSON MIME type | Preview model, not free; higher capability |
 | Anthropic | `claude-3-5-haiku` | $0.80 | $4.00 | JSON output via prompt | Fast, but output tokens are expensive |
 
 ## Chosen model

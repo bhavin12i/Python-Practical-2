@@ -15,13 +15,3 @@ def competitor_guidance(extracted):
         + ". Label any competitor you cannot verify as 'AI-generated suggestion'. Do not claim "
         "measured market share or search volume."
     )
-
-
-def normalize_competitors(values):
-    result = []
-    for value in values:
-        item = dict(value)
-        if "source" not in item:
-            item["source"] = "AI-generated suggestion"
-        result.append(item)
-    return result

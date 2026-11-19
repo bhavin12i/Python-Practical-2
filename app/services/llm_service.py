@@ -9,7 +9,7 @@ from app.config import settings
 
 PRICING_PER_MILLION = {
     "gpt-4o-mini": (0.15, 0.60),
-    "gemini-1.5-flash": (0.075, 0.30),
+    "gemini-3.5-flash-lite": (0.30, 2.50),
     "claude-3-5-haiku": (0.80, 4.00),
 }
 

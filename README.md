@@ -14,7 +14,7 @@ The service implements the assignment at https://github.com/chivoxai/practical-t
 - Real extraction via `httpx` + `BeautifulSoup`; real LLM calls via OpenAI, Gemini or Anthropic REST APIs.
 - Structured JSON validated with Pydantic; no invented search volumes.
 
-**Current verification status:** unit and mocked-integration tests pass. Live LLM analysis is **not verified** in this environment because no provider API key was supplied. See [docs/compliance-report.md](docs/compliance-report.md).
+**Current verification status:** unit and mocked-integration tests pass, and a live Gemini analysis was verified with a real API key. See [docs/compliance-report.md](docs/compliance-report.md) and [docs/evidence/live-analysis.txt](docs/evidence/live-analysis.txt).
 
 ## 2. Installation and execution
 
@@ -41,7 +41,7 @@ Alternatives:
 
 ```bash
 LLM_PROVIDER=gemini
-LLM_MODEL=gemini-1.5-flash
+LLM_MODEL=gemini-3.5-flash-lite
 GEMINI_API_KEY=your-real-key
 ```
 
@@ -292,7 +292,8 @@ Full research: [docs/llm-comparison.md](docs/llm-comparison.md).
 - **Estimated cost:** ~$0.0017 per analysis at $0.15/M input and $0.60/M output
 - **Expected response time:** ~4–18 s end-to-end estimate; **not measured** because no API key was available
 - **Reason for selection:** cheap, widely available, reliable JSON mode and reported token usage for costing.
-- **Alternative model:** Google `gemini-1.5-flash` (native JSON MIME response and a free development tier) or Anthropic `claude-3-5-haiku`.
+- **Alternative model:** Google `gemini-3.5-flash-lite` (native JSON MIME response and a free development tier) or Anthropic `claude-3-5-haiku`.
+- The live verification used the Gemini free tier because the available OpenAI account had no credits.
 - **Cost optimization:** HTML cleaning, token caps, one LLM call for all sections, local Pydantic validation, one retry maximum, and a one-hour response cache.
 
 Accuracy and latency figures are estimates from documentation, not benchmark results produced in this repository.
@@ -325,7 +326,7 @@ curl http://localhost:4000/health
 curl -X POST http://localhost:4000/link-analysis -H 'Content-Type: application/json' -d '{"url":"https://example.com"}'
 ```
 
-With a valid API key this returns a real LLM analysis. Without a key it returns HTTP 503 `llm_api_key_missing`, which is the expected graceful failure.
+With a valid API key this returns a real LLM analysis. Without a key it returns HTTP 503 with error code `analysis_failed` and a message saying no API key is configured, which is the expected graceful failure.
 
 ## 9. Deployment and live demo
 
@@ -336,15 +337,16 @@ With a valid API key this returns a real LLM analysis. Without a key it returns 
 | Swagger documentation | `[TO BE PROVIDED AFTER DEPLOYMENT]/docs` |
 | Health check | `[TO BE PROVIDED AFTER DEPLOYMENT]/health` |
 
-Deployment is being performed manually by the applicant; no public URL has been provided yet. Exact steps are in [docs/deployment-steps.md](docs/deployment-steps.md). Verification evidence will be recorded in `docs/evidence/deployment-verification.txt` only after real requests succeed.
+Deployment is being performed manually by the applicant; no public URL has been provided yet. Use `render.yaml` or the `Dockerfile` on your host, set the provider key in the hosting dashboard, and record the live requests in `docs/evidence/deployment-verification.txt` only after they succeed.
 
 ## 10. Evidence
 
 - Swagger UI screenshot: `docs/evidence/swagger-ui.png` (only added from a real browser capture)
 - Successful request/response example: `docs/evidence/api-request-response.txt`
+- Live provider request/response: `docs/evidence/live-analysis.txt`
 - Health check result: `docs/evidence/health-check.txt`
 - Test execution output: `docs/evidence/test-output.txt`
-- Deployment verification: `docs/evidence/deployment-verification.txt`
+- Deployment verification: `docs/evidence/deployment-verification.txt` (added after deployment)
 
 See [docs/evidence/README.md](docs/evidence/README.md) for what each file proves and its current status.
 
@@ -359,7 +361,7 @@ The following must be completed personally by the applicant and are **not** clai
 
 ## 12. Submission email
 
-Template: [docs/submission-email.md](docs/submission-email.md). Fill every applicant placeholder before sending to `hr@chivoxai.com`.
+Send the email to `hr@chivoxai.com` with the applicant details listed in section 11 and the public repository URL. No email template file is kept in this repository.
 
 ## 13. Evaluation weightage (unchanged)
 

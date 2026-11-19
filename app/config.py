@@ -43,7 +43,7 @@ class Settings:
             return self.llm_model
         defaults = {
             "openai": "gpt-4o-mini",
-            "gemini": "gemini-1.5-flash",
+            "gemini": "gemini-3.5-flash-lite",
             "anthropic": "claude-3-5-haiku",
         }
         return defaults.get(self.llm_provider, "gpt-4o-mini")
