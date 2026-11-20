@@ -12,9 +12,11 @@ The service implements the assignment at https://github.com/chivoxai/practical-t
 - Health check: `GET /health`
 - Five analysis sections: competitor comparison, five target search queries, SEO improvements, top five services, target audience.
 - Real extraction via `httpx` + `BeautifulSoup`; real LLM calls via OpenAI, Gemini or Anthropic REST APIs.
+- Social/JS-heavy pages (Instagram, Facebook, YouTube, X, LinkedIn, etc.) are supported by recovering Open Graph, Twitter card, JSON-LD and meta-tag content; `metadata.extraction.content_source` reports whether the prompt used `page_text`, `page_text+metadata` or `page_metadata`.
+- Pages that block crawlers and expose no readable text return a structured 422 error instead of a generic analysis.
 - Structured JSON validated with Pydantic; no invented search volumes.
 
-**Current verification status:** unit and mocked-integration tests pass, and a live Gemini analysis was verified with a real API key. See [docs/compliance-report.md](docs/compliance-report.md) and [docs/evidence/live-analysis.txt](docs/evidence/live-analysis.txt).
+Live Gemini analysis has been verified for the Instagram link from the review along with Facebook, X, YouTube, LinkedIn and `example.com`. See [docs/verification.md](docs/verification.md) for the full list and [docs/evidence/social-live-analysis.txt](docs/evidence/social-live-analysis.txt) for the raw response.
 
 ## 2. Installation and execution
 
@@ -47,7 +49,7 @@ GEMINI_API_KEY=your-real-key
 
 ```bash
 LLM_PROVIDER=anthropic
-LLM_MODEL=claude-3-5-haiku
+LLM_MODEL=claude-haiku-4-5-20251001
 ANTHROPIC_API_KEY=your-real-key
 ```
 
@@ -71,6 +73,14 @@ Health check:
 curl http://localhost:4000/health
 ```
 
+Social profile links work with the same request:
+
+```bash
+curl -X POST http://localhost:4000/link-analysis \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.instagram.com/crestspot"}'
+```
+
 Error responses are structured as:
 
 ```json
@@ -83,9 +93,11 @@ Error responses are structured as:
 }
 ```
 
+A page that returns no readable content (for example, a crawler-blocked social page) returns HTTP 422 with `code: website_fetch_failed` and a message explaining that the site may require JavaScript or block automated requests.
+
 ## 4. Sample structured JSON response
 
-The following shape matches the required example structure. The values shown are illustrative until a live LLM call is made with a real API key.
+The following shape matches the required example structure. The values shown are illustrative; a real response depends on the submitted URL and LLM provider (a live Gemini response is recorded in `docs/evidence/live-analysis.txt`).
 
 ```json
 {
@@ -287,16 +299,15 @@ Full research: [docs/llm-comparison.md](docs/llm-comparison.md).
 
 - **Recommended provider:** OpenAI
 - **Recommended model:** `gpt-4o-mini`
-- **Estimated input tokens:** ~5,000 per analysis
-- **Estimated output tokens:** ~1,600 per analysis
-- **Estimated cost:** ~$0.0017 per analysis at $0.15/M input and $0.60/M output
-- **Expected response time:** ~4–18 s end-to-end estimate; **not measured** because no API key was available
+- **Tokens observed in live runs:** 770–4,326 input and 1,895–2,277 output per analysis
+- **Estimated cost:** ~$0.0014 for a 1,000 input / 2,000 output analysis at $0.15/M input and $0.60/M output
+- **Response time:** 6.1 s measured for the live Instagram request; no cross-provider benchmark was run
 - **Reason for selection:** cheap, widely available, reliable JSON mode and reported token usage for costing.
-- **Alternative model:** Google `gemini-3.5-flash-lite` (native JSON MIME response and a free development tier) or Anthropic `claude-3-5-haiku`.
-- The live verification used the Gemini free tier because the available OpenAI account had no credits.
+- **Alternative model:** Google `gemini-3.5-flash-lite` (native JSON MIME response and a free development tier) or Anthropic `claude-haiku-4-5-20251001`.
+- Live verification used Gemini; `LLM_MAX_OUTPUT_TOKENS` is 8,192 so the full JSON response is not truncated.
 - **Cost optimization:** HTML cleaning, token caps, one LLM call for all sections, local Pydantic validation, one retry maximum, and a one-hour response cache.
 
-Accuracy and latency figures are estimates from documentation, not benchmark results produced in this repository.
+Pricing comes from provider documentation; response times are from local runs rather than a formal benchmark.
 
 ## 7. Security considerations
 
@@ -307,7 +318,7 @@ Accuracy and latency figures are estimates from documentation, not benchmark res
 - API keys read only from environment variables; `.env` is gitignored; `.env.example` contains no real credentials.
 - Error messages from the LLM provider are truncated and never include keys.
 - Pydantic schemas with `extra="forbid"` on requests and strict response validation.
-- No secrets, fabricated logs or invented volumes are committed.
+- No credentials are committed, and the response schema rejects invented search volumes.
 
 ## 8. Testing instructions
 
@@ -316,7 +327,7 @@ pip install -r requirements.txt
 python -m pytest -q
 ```
 
-The suite covers health/docs/OpenAPI, required response fields, exactly five queries, all five platform mappings, invalid and SSRF URLs, real HTML parsing with a mocked transport, and the OpenAI structured-JSON adapter with a mocked HTTP transport. Actual test output is stored in [docs/evidence/test-output.txt](docs/evidence/test-output.txt).
+The 16 tests cover health/docs/OpenAPI, response fields, five queries and services, all five platform mappings, no invented search volumes, invalid and SSRF URLs, social metadata extraction, status-before-content-type handling, Gemini response parsing, malformed-JSON retries and each provider adapter with a mocked HTTP transport. Output is in [docs/evidence/test-output.txt](docs/evidence/test-output.txt).
 
 Manual local verification:
 
@@ -337,18 +348,17 @@ With a valid API key this returns a real LLM analysis. Without a key it returns 
 | Swagger documentation | `[TO BE PROVIDED AFTER DEPLOYMENT]/docs` |
 | Health check | `[TO BE PROVIDED AFTER DEPLOYMENT]/health` |
 
-Deployment is being performed manually by the applicant; no public URL has been provided yet. Use `render.yaml` or the `Dockerfile` on your host, set the provider key in the hosting dashboard, and record the live requests in `docs/evidence/deployment-verification.txt` only after they succeed.
+Deployment is manual. Use `render.yaml` or the `Dockerfile`, set the provider key in the hosting dashboard, then replace the URLs above with the deployed ones.
 
 ## 10. Evidence
 
-- Swagger UI screenshot: `docs/evidence/swagger-ui.png` (only added from a real browser capture)
-- Successful request/response example: `docs/evidence/api-request-response.txt`
-- Live provider request/response: `docs/evidence/live-analysis.txt`
-- Health check result: `docs/evidence/health-check.txt`
-- Test execution output: `docs/evidence/test-output.txt`
-- Deployment verification: `docs/evidence/deployment-verification.txt` (added after deployment)
+- Swagger UI: `docs/evidence/swagger-ui.png`
+- Mock-provider response: `docs/evidence/api-request-response.txt`
+- Live responses: `docs/evidence/live-analysis.txt`, `docs/evidence/social-live-analysis.txt`
+- Health check: `docs/evidence/health-check.txt`
+- Test output: `docs/evidence/test-output.txt`
 
-See [docs/evidence/README.md](docs/evidence/README.md) for what each file proves and its current status.
+See [docs/evidence/README.md](docs/evidence/README.md) for details.
 
 ## 11. Recruitment verification (applicant action required)
 

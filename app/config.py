@@ -23,7 +23,7 @@ class Settings:
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
         self.llm_timeout_seconds = env_int("LLM_TIMEOUT_SECONDS", 45)
-        self.llm_max_output_tokens = env_int("LLM_MAX_OUTPUT_TOKENS", 1800)
+        self.llm_max_output_tokens = env_int("LLM_MAX_OUTPUT_TOKENS", 8192)
         self.website_timeout_seconds = env_int("WEBSITE_TIMEOUT_SECONDS", 12)
         self.website_max_bytes = env_int("WEBSITE_MAX_BYTES", 1500000)
         self.website_max_content_chars = env_int("WEBSITE_MAX_CONTENT_CHARS", 14000)
@@ -44,7 +44,7 @@ class Settings:
         defaults = {
             "openai": "gpt-4o-mini",
             "gemini": "gemini-3.5-flash-lite",
-            "anthropic": "claude-3-5-haiku",
+            "anthropic": "claude-haiku-4-5-20251001",
         }
         return defaults.get(self.llm_provider, "gpt-4o-mini")
 

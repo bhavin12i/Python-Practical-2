@@ -8,7 +8,7 @@ I compared five models from three providers before choosing one for this project
 | OpenAI | `gpt-4.1-mini` | $0.40 | $1.60 | Structured JSON supported | Stronger model, costs more than the one above |
 | Google | `gemini-3.5-flash-lite` | $0.30 | $2.50 | Native JSON MIME type | Free tier with no billing account; cheap paid tier |
 | Google | `gemini-3.1-pro-preview` | $2.00 | $12.00 | Native JSON MIME type | Preview model, not free; higher capability |
-| Anthropic | `claude-3-5-haiku` | $0.80 | $4.00 | JSON output via prompt | Fast, but output tokens are expensive |
+| Anthropic | `claude-haiku-4-5-20251001` | $1.00 | $5.00 | JSON output via prompt | Active replacement for the retired Claude 3.5 Haiku; output tokens are expensive |
 
 ## Chosen model
 
@@ -16,16 +16,16 @@ I compared five models from three providers before choosing one for this project
 
 ## Cost per analysis
 
-Each request sends roughly 5,000 input tokens and receives up to 1,600 output tokens. With `gpt-4o-mini` that works out to about $0.0017 per analysis:
+Live runs recorded 770-4,326 input tokens (depending on page length) and 1,895-2,277 output tokens for the full five-section response. `LLM_MAX_OUTPUT_TOKENS` defaults to 8,192 so Gemini does not truncate the JSON. With `gpt-4o-mini`, a typical 1,000 input / 2,000 output token analysis costs about $0.0014:
 
-- Input: 5,000 / 1,000,000 x $0.15 = $0.00075
-- Output: 1,600 / 1,000,000 x $0.60 = $0.00096
+- Input: 1,000 / 1,000,000 x $0.15 = $0.00015
+- Output: 2,000 / 1,000,000 x $0.60 = $0.00120
 
 The endpoint reports the actual cost in `metadata.estimated_cost_usd` when the provider returns token usage.
 
 ## Speed and measurements
 
-No live provider key was available while building this project, so response times were not measured. The 4-18 second figure in the README is only an estimate from typical API behaviour, not a benchmark result from this repository. The same applies to all figures above: they come from published pricing, not from tests run here.
+Live Gemini runs with a real key verified the response shape for the reviewer's Instagram link and other social URLs (`docs/evidence/social-live-analysis.txt`); that key is not stored in the repository. Measured end-to-end latency was 6.1 seconds for the Instagram request. Response times were not benchmarked across providers, so no cross-provider speed claim is made here. All pricing figures above come from published provider pricing pages.
 
 ## Keeping costs down
 

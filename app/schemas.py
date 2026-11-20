@@ -46,6 +46,12 @@ class CompetitorAnalysis(BaseModel):
     evidence_note: str = "Competitors are AI-generated suggestions unless an observed website link supports them."
 
 
+def _no_measured_volume(value):
+    if value is not None:
+        raise ValueError("Measured search volumes must not be reported unless backed by a data source")
+    return value
+
+
 class TargetSearchQuery(BaseModel):
     query: str
     platforms: List[str] = Field(default_factory=list)
@@ -65,6 +71,11 @@ class TargetSearchQuery(BaseModel):
                 result.append(platform)
         return result
 
+    @field_validator("measured_search_volume")
+    @classmethod
+    def no_measured_search_volume(cls, value):
+        return _no_measured_volume(value)
+
 
 class SeoImprovements(BaseModel):
     primary_keyword: str
@@ -77,6 +88,11 @@ class SeoImprovements(BaseModel):
     recommended_title_structure: str = ""
     keyword_data_source: Literal["AI-generated suggestion"] = "AI-generated suggestion"
     measured_search_volume: Optional[str] = None
+
+    @field_validator("measured_search_volume")
+    @classmethod
+    def no_measured_search_volume(cls, value):
+        return _no_measured_volume(value)
 
 
 class Service(BaseModel):
@@ -128,8 +144,8 @@ class Analysis(BaseModel):
         for platform in CANONICAL_PLATFORMS:
             if platform not in covered:
                 raise ValueError("Queries must cover Google, Facebook, Instagram, LinkedIn and X")
-        if not 1 <= len(self.top_services) <= 5:
-            raise ValueError("Provide between one and five top services")
+        if len(self.top_services) != 5:
+            raise ValueError("Exactly five top services are required")
         return self
 
 

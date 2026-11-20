@@ -5,7 +5,7 @@ from app.config import settings
 from app.main import _response_cache, app
 from app.schemas import Analysis, Brand
 from app.services.llm_service import LLMResult, LLMService
-from app.services.website_extractor import ExtractedWebsite, extract_website
+from app.services.website_extractor import ExtractedWebsite, WebsiteFetchError, extract_website
 
 SAMPLE_PAYLOAD = {
     "brand": {
@@ -263,6 +263,29 @@ def test_schema_requires_exactly_five_queries():
         Analysis.model_validate(payload)
 
 
+def test_schema_requires_exactly_five_services():
+    payload = dict(SAMPLE_PAYLOAD["analysis"])
+    payload["top_services"] = payload["top_services"][:3]
+    with pytest.raises(ValueError, match="Exactly five"):
+        Analysis.model_validate(payload)
+
+
+def test_schema_rejects_invented_search_volume():
+    payload = dict(SAMPLE_PAYLOAD["analysis"])
+    queries = [dict(query) for query in payload["target_search_queries"]]
+    queries[0]["measured_search_volume"] = "5000/mo"
+    payload["target_search_queries"] = queries
+    with pytest.raises(ValueError, match="Measured search volumes"):
+        Analysis.model_validate(payload)
+
+
+def test_shared_address_space_is_blocked():
+    from app.utils.validators import _is_blocked_ip
+
+    assert _is_blocked_ip("100.100.100.200") is True
+    assert _is_blocked_ip("8.8.8.8") is False
+
+
 @pytest.mark.asyncio
 async def test_extraction_from_real_html(monkeypatch):
     async def fake_validate(url):
@@ -294,6 +317,98 @@ async def test_extraction_from_real_html(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_extraction_recovers_social_profile_metadata(monkeypatch):
+    async def fake_validate(url):
+        return url
+
+    monkeypatch.setattr("app.services.website_extractor.validate_public_url", fake_validate)
+    monkeypatch.setattr("app.services.website_extractor.validate_redirect_url", fake_validate)
+
+    html = b"""
+    <html><head><title>CREST #1 (@crestspot) &bull; Instagram photos and videos</title>
+    <meta property="og:site_name" content="Instagram">
+    <meta property="og:type" content="profile">
+    <meta property="og:title" content="CREST #1 (@crestspot)">
+    <meta property="og:description" content="970 Followers, 1,177 Following, 52 Posts - CREST #1">
+    <meta name="description" content="CREST #1 on Instagram: &quot;Claim Top Spot #1 Own it. Be seen.&quot;">
+    <meta name="twitter:label1" content="Posts"><meta name="twitter:data1" content="52">
+    <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"ProfilePage","name":"CREST #1",
+       "description":"Digital marketing and business promotion account."}
+    </script>
+    </head><body><script>window.__bootstrap = {}</script></body></html>
+    """
+
+    def handler(request: Request) -> Response:
+        return Response(200, text=html.decode(), headers={"content-type": "text/html; charset=utf-8"})
+
+    async with AsyncClient(transport=MockTransport(handler)) as client:
+        result = await extract_website("https://www.instagram.com/crestspot", client=client)
+
+    assert result.content_source == "page_metadata"
+    assert result.word_count > 0
+    assert result.title == "CREST #1 (@crestspot)"
+    assert result.meta_description == "970 Followers, 1,177 Following, 52 Posts - CREST #1"
+    assert "970 Followers" in result.text
+    assert "Claim Top Spot #1" in result.text
+    assert "Posts 52" in result.text
+    assert "Digital marketing and business promotion account." in result.text
+    assert "bootstrap" not in result.text
+    assert result.as_dict()["content_source"] == "page_metadata"
+    assert "Content source: page_metadata" in result.prompt_content(4000)
+
+
+@pytest.mark.asyncio
+async def test_extraction_keeps_unique_metadata_on_text_heavy_pages(monkeypatch):
+    async def fake_validate(url):
+        return url
+
+    monkeypatch.setattr("app.services.website_extractor.validate_public_url", fake_validate)
+    monkeypatch.setattr("app.services.website_extractor.validate_redirect_url", fake_validate)
+
+    body_text = " ".join(["We provide digital marketing services for growing brands."] * 6)
+    html = f"""
+    <html><head><title>Acme Digital</title>
+    <meta property="og:site_name" content="Acme Site">
+    <meta property="og:description" content="Affordable SEO packages for local businesses.">
+    </head><body><h1>SEO services</h1><p>{body_text}</p></body></html>
+    """
+
+    def handler(request: Request) -> Response:
+        return Response(200, text=html, headers={"content-type": "text/html; charset=utf-8"})
+
+    async with AsyncClient(transport=MockTransport(handler)) as client:
+        result = await extract_website("https://example.com", client=client)
+
+    assert result.content_source == "page_text+metadata"
+    assert "SEO services" in result.text
+    assert "Affordable SEO packages for local businesses." in result.text
+    assert "Acme Site" in result.text
+
+
+@pytest.mark.asyncio
+async def test_extraction_of_blocked_page_reports_unavailable(monkeypatch):
+    async def fake_validate(url):
+        return url
+
+    monkeypatch.setattr("app.services.website_extractor.validate_public_url", fake_validate)
+    monkeypatch.setattr("app.services.website_extractor.validate_redirect_url", fake_validate)
+
+    def handler(request: Request) -> Response:
+        return Response(
+            200,
+            text="<html><title>Facebook</title><body></body></html>",
+            headers={"content-type": "text/html; charset=utf-8"},
+        )
+
+    async with AsyncClient(transport=MockTransport(handler)) as client:
+        with pytest.raises(WebsiteFetchError, match="No readable content") as exc_info:
+            await extract_website("https://www.facebook.com/privatepage", client=client)
+
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_llm_openai_structured_json_adapter(monkeypatch):
     monkeypatch.setattr("app.services.llm_service.settings", settings)
     captured = {}
@@ -320,3 +435,116 @@ async def test_llm_openai_structured_json_adapter(monkeypatch):
     assert result.input_tokens == 100
     assert result.output_tokens == 50
     assert result.estimated_cost_usd("gpt-4o-mini") == pytest.approx(0.000045)
+
+
+@pytest.mark.asyncio
+async def test_llm_gemini_multipart_and_thought_parts(monkeypatch):
+    monkeypatch.setattr("app.services.llm_service.settings", settings)
+
+    def handler(request: Request) -> Response:
+        return Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {
+                            "parts": [
+                                {"text": "thinking", "thought": True},
+                                {"text": '{"brand": {"name": "Acme"}}'},
+                            ]
+                        },
+                    }
+                ],
+                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 20},
+            },
+        )
+
+    async with AsyncClient(transport=MockTransport(handler)) as client:
+        service = LLMService(client=client)
+        service.provider = "gemini"
+        service.model = "gemini-3.5-flash-lite"
+        service.api_key = "test-key-not-real"
+        result = await service.generate_json("system", "user")
+
+    assert result.payload == {"brand": {"name": "Acme"}}
+    assert result.input_tokens == 10
+    assert result.output_tokens == 20
+
+
+@pytest.mark.asyncio
+async def test_llm_gemini_truncated_response_rejected(monkeypatch):
+    from app.services.llm_service import LLMBadResponseError
+
+    monkeypatch.setattr("app.services.llm_service.settings", settings)
+
+    def handler(request: Request) -> Response:
+        return Response(
+            200,
+            json={
+                "candidates": [
+                    {"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": '{"brand":'}]}}
+                ]
+            },
+        )
+
+    async with AsyncClient(transport=MockTransport(handler)) as client:
+        service = LLMService(client=client)
+        service.provider = "gemini"
+        service.model = "gemini-3.5-flash-lite"
+        service.api_key = "test-key-not-real"
+        with pytest.raises(LLMBadResponseError, match="truncated"):
+            await service.generate_json("system", "user")
+
+
+@pytest.mark.asyncio
+async def test_analysis_retries_malformed_llm_json(monkeypatch):
+    from app.services.analysis_service import analyze_website
+    from app.services.llm_service import LLMResult
+
+    calls = []
+
+    async def fake_generate_json(self, system, prompt):
+        calls.append(prompt)
+        if len(calls) == 1:
+            from app.services.llm_service import LLMBadResponseError
+
+            raise LLMBadResponseError("LLM response was not valid JSON")
+        return LLMResult(payload=SAMPLE_PAYLOAD, input_tokens=100, output_tokens=100)
+
+    monkeypatch.setattr(LLMService, "generate_json", fake_generate_json)
+
+    extracted = ExtractedWebsite(
+        requested_url="https://example.com",
+        final_url="https://example.com",
+        title="Acme Digital",
+        text="We provide SEO services.",
+        word_count=4,
+        char_count=24,
+    )
+    analysis, brand, result = await analyze_website(extracted)
+
+    assert len(calls) == 2
+    assert "failed validation" in calls[1]
+    assert brand.name == "Acme Digital"
+    assert len(analysis.target_search_queries) == 5
+
+
+@pytest.mark.asyncio
+async def test_error_status_takes_priority_over_content_type(monkeypatch):
+    async def fake_validate(url):
+        return url
+
+    monkeypatch.setattr("app.services.website_extractor.validate_public_url", fake_validate)
+    monkeypatch.setattr("app.services.website_extractor.validate_redirect_url", fake_validate)
+
+    def handler(request: Request) -> Response:
+        return Response(
+            404,
+            text='{"error":"not found"}',
+            headers={"content-type": "application/json"},
+        )
+
+    async with AsyncClient(transport=MockTransport(handler)) as client:
+        with pytest.raises(WebsiteFetchError, match="HTTP 404"):
+            await extract_website("https://example.com/missing", client=client)

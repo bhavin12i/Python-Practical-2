@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from app.config import settings
 from app.schemas import Analysis, Brand
 from app.services.competitor_service import PLATFORM_GUIDANCE, competitor_guidance
-from app.services.llm_service import LLMService, LLMServiceError
+from app.services.llm_service import LLMBadResponseError, LLMService, LLMServiceError
 from app.services.website_extractor import ExtractedWebsite
 
 SYSTEM_PROMPT = (
@@ -55,7 +55,7 @@ def build_user_prompt(extracted: ExtractedWebsite) -> str:
         "Website content:\n" + content,
         competitor_guidance(extracted),
         PLATFORM_GUIDANCE,
-        "Give exactly five search queries and between one and five top services. Use 'extracted "
+        "Give exactly five search queries and exactly five top services. Use 'extracted "
         "from website' for a service only when the page describes it directly; otherwise use "
         "'AI-generated inference'. Keywords are suggestions, so leave every measured_search_volume "
         "null. Include primary, secondary, long-tail and business keywords, supporting content "
@@ -86,6 +86,11 @@ async def analyze_website(extracted: ExtractedWebsite):
 
         try:
             result = await service.generate_json(SYSTEM_PROMPT, prompt)
+        except LLMBadResponseError as exc:
+            last_error = str(exc)
+            if attempt == 1:
+                raise AnalysisServiceError("Analysis output failed validation: " + last_error) from exc
+            continue
         except LLMServiceError as exc:
             raise AnalysisServiceError(str(exc), exc.status_code) from exc
 

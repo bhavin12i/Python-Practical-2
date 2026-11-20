@@ -21,6 +21,7 @@ app = FastAPI(
 
 _response_cache = {}
 _cache_lock = asyncio.Lock()
+_CACHE_MAX_ENTRIES = 128
 
 
 def error_response(status_code, code, message):
@@ -123,5 +124,8 @@ async def link_analysis(request: AnalysisRequest):
     )
 
     async with _cache_lock:
+        if len(_response_cache) >= _CACHE_MAX_ENTRIES:
+            oldest = min(_response_cache, key=lambda key: _response_cache[key][0])
+            _response_cache.pop(oldest, None)
         _response_cache[cache_key] = (time.time(), response)
     return response

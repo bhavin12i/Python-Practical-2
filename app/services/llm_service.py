@@ -10,6 +10,7 @@ from app.config import settings
 PRICING_PER_MILLION = {
     "gpt-4o-mini": (0.15, 0.60),
     "gemini-3.5-flash-lite": (0.30, 2.50),
+    "claude-haiku-4-5-20251001": (1.00, 5.00),
     "claude-3-5-haiku": (0.80, 4.00),
 }
 
@@ -18,6 +19,10 @@ class LLMServiceError(Exception):
     def __init__(self, message, status_code=502):
         super().__init__(message)
         self.status_code = status_code
+
+
+class LLMBadResponseError(LLMServiceError):
+    pass
 
 
 @dataclass
@@ -36,7 +41,7 @@ class LLMResult:
 
 def _extract_json(text):
     if not text:
-        raise LLMServiceError("LLM returned an empty response")
+        raise LLMBadResponseError("LLM returned an empty response")
 
     cleaned = text.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
@@ -45,15 +50,15 @@ def _extract_json(text):
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start < 0 or end <= start:
-        raise LLMServiceError("LLM response did not contain a JSON object")
+        raise LLMBadResponseError("LLM response did not contain a JSON object")
 
     try:
         payload = json.loads(cleaned[start : end + 1])
     except json.JSONDecodeError as exc:
-        raise LLMServiceError("LLM response was not valid JSON") from exc
+        raise LLMBadResponseError("LLM response was not valid JSON") from exc
 
     if not isinstance(payload, dict):
-        raise LLMServiceError("LLM response was not a JSON object")
+        raise LLMBadResponseError("LLM response was not a JSON object")
     return payload
 
 
@@ -156,7 +161,11 @@ class LLMService:
             )
 
         if self.provider == "gemini":
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            candidate = data["candidates"][0]
+            if candidate.get("finishReason") == "MAX_TOKENS":
+                raise LLMBadResponseError("LLM response was truncated before it was complete")
+            parts = candidate["content"]["parts"]
+            text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
             usage = data.get("usageMetadata", {})
             return LLMResult(
                 _extract_json(text),
@@ -205,7 +214,7 @@ class LLMService:
                     if attempt == 1:
                         raise LLMServiceError(last_error) from exc
                 except (KeyError, IndexError, TypeError) as exc:
-                    raise LLMServiceError("LLM provider returned an unexpected response shape") from exc
+                    raise LLMBadResponseError("LLM provider returned an unexpected response shape") from exc
 
             raise LLMServiceError(last_error or "LLM provider request failed")
         finally:

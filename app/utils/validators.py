@@ -5,6 +5,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 BLOCKED_SUFFIXES = (".localhost", ".local", ".internal", ".home.arpa")
 BLOCKED_HOSTNAMES = {"localhost", "metadata.google.internal", "metadata"}
+SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
 
 class UrlValidationError(ValueError):
@@ -19,6 +20,8 @@ def _is_blocked_ip(address):
     ip = ipaddress.ip_address(address.split("%")[0])
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv4Address) and ip in SHARED_ADDRESS_SPACE:
+        return True
     return (
         ip.is_private
         or ip.is_loopback

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
@@ -35,6 +36,7 @@ class ExtractedWebsite:
     word_count: int = 0
     char_count: int = 0
     truncated: bool = False
+    content_source: str = "page_text"
 
     def as_dict(self):
         return {
@@ -48,6 +50,7 @@ class ExtractedWebsite:
             "word_count": self.word_count,
             "char_count": self.char_count,
             "truncated": self.truncated,
+            "content_source": self.content_source,
         }
 
     def prompt_content(self, max_chars):
@@ -59,6 +62,7 @@ class ExtractedWebsite:
             "Headings: " + (" | ".join(self.headings) if self.headings else "not found"),
             "Observed external links: "
             + (" | ".join(self.external_links) if self.external_links else "none observed"),
+            "Content source: " + self.content_source,
             "Page text: " + (self.text or "no readable text found"),
         ]
         content = "\n".join(lines)
@@ -71,16 +75,105 @@ def _clean(value):
     return " ".join(value.split()).strip()
 
 
+def _collect_meta(soup):
+    values = {}
+    for tag in soup.find_all("meta"):
+        key = _clean(str(tag.get("property") or tag.get("name") or tag.get("itemprop") or "")).lower()
+        content = _clean(str(tag.get("content", "")))
+        if key and content and key not in values:
+            values[key] = content
+    return values
+
+
+def _first(meta, *keys):
+    for key in keys:
+        if meta.get(key):
+            return meta[key]
+    return ""
+
+
+def _jsonld_nodes(soup, limit=8):
+    nodes = []
+    for tag in soup.find_all("script", type="application/ld+json"):
+        raw = tag.string or tag.get_text() or ""
+        if not raw.strip() or len(raw) > 30000:
+            continue
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        stack = [data]
+        while stack and len(nodes) < limit:
+            node = stack.pop()
+            if isinstance(node, list):
+                stack.extend(node)
+            elif isinstance(node, dict):
+                nodes.append(node)
+                for key in ("@graph", "mainEntity", "itemListElement", "hasPart"):
+                    child = node.get(key)
+                    if isinstance(child, list):
+                        stack.extend(child)
+                    elif isinstance(child, dict):
+                        stack.append(child)
+    return nodes
+
+
+def _metadata_lines(soup, meta):
+    lines = []
+    seen = []
+
+    def add(label, value, limit=600):
+        value = _clean(value or "")[:limit]
+        if not value:
+            return
+        key = "".join(value.lower().split())
+        if any(len(key) > 100 and len(old) > 100 and key[:100] == old[:100] for old in seen):
+            return
+        seen.append(key)
+        lines.append((label, value))
+
+    add("Site", _first(meta, "og:site_name", "application-title", "twitter:site"))
+    add("Page type", _first(meta, "og:type"))
+    add("Description", _first(meta, "og:description", "twitter:description"), 1200)
+    add("Description", meta.get("description"), 1200)
+    add("Keywords", _first(meta, "keywords", "news_keywords"))
+    add("Author", _first(meta, "author", "article:author"))
+
+    index = 1
+    while meta.get("twitter:label" + str(index)) or meta.get("twitter:data" + str(index)):
+        label = meta.get("twitter:label" + str(index), "")
+        data = meta.get("twitter:data" + str(index), "")
+        add("Profile detail", (label + " " + data).strip())
+        index += 1
+
+    for node in _jsonld_nodes(soup)[:5]:
+        kind = _clean(str(node.get("@type", "")))
+        name = _clean(str(node.get("name") or node.get("alternateName") or ""))
+        description = _clean(str(node.get("description") or ""))
+        if not (kind or name or description):
+            continue
+        label = "Structured data"
+        if kind:
+            label += " (" + kind + ")"
+        if name:
+            add(label, name)
+        add(label + " description", description, 800)
+
+    return lines
+
+
 def _parse(html, final_url):
     soup = BeautifulSoup(html, "html.parser")
+    meta = _collect_meta(soup)
+    metadata_lines = _metadata_lines(soup, meta)
+
+    title = _clean(str(meta.get("og:title") or meta.get("twitter:title") or ""))
+    if not title:
+        title = _clean(soup.title.get_text(" ", strip=True)) if soup.title else ""
+    description = _first(meta, "og:description", "twitter:description", "description")
+
     for tag in soup(["script", "style", "noscript", "svg", "nav", "footer", "header", "form", "iframe", "template"]):
         tag.decompose()
-
-    title = _clean(soup.title.get_text(" ", strip=True)) if soup.title else ""
-    meta = soup.find("meta", attrs={"name": "description"})
-    if meta is None:
-        meta = soup.find("meta", attrs={"property": "og:description"})
-    description = _clean(meta.get("content", "")) if meta else ""
 
     headings = []
     for tag in soup.find_all(["h1", "h2", "h3"]):
@@ -98,6 +191,30 @@ def _parse(html, final_url):
         parts.append(value)
 
     body = _clean(" ".join(parts))
+    if len(body.split()) < 5:
+        for tag in soup(["head", "title"]):
+            tag.decompose()
+        body = _clean(soup.get_text(" ", strip=True))
+
+    fresh_metadata = [
+        (label, value)
+        for label, value in metadata_lines
+        if len(value) <= 40 or value.lower() not in body.lower()
+    ]
+    if fresh_metadata:
+        metadata_text = "Metadata extracted from the page:\n" + "\n".join(
+            label + ": " + value for label, value in fresh_metadata
+        )
+        if not body:
+            text = metadata_text
+            content_source = "page_metadata"
+        else:
+            text = body + "\n\n" + metadata_text
+            content_source = "page_text+metadata"
+    else:
+        text = body
+        content_source = "page_text" if body else "unavailable"
+
     host = urlsplit(final_url).netloc.lower()
     links = []
     for anchor in soup.find_all("a", href=True):
@@ -120,10 +237,11 @@ def _parse(html, final_url):
         title=title,
         meta_description=description,
         headings=headings[:40],
-        text=body,
+        text=text,
         external_links=links,
-        word_count=len(body.split()),
-        char_count=len(body),
+        word_count=len(text.split()),
+        char_count=len(text),
+        content_source=content_source,
     )
 
 
@@ -157,12 +275,12 @@ async def extract_website(url, client=None):
                             raise WebsiteFetchError("Too many redirects while fetching website", 400)
                         continue
 
+                    if status_code >= 400:
+                        raise WebsiteFetchError("Website returned HTTP " + str(status_code), 502)
+
                     content_type = response.headers.get("content-type", "").lower()
                     if content_type and not any(t in content_type for t in ("text/html", "application/xhtml+xml")):
                         raise WebsiteFetchError("Unsupported content type: " + content_type, 415)
-
-                    if status_code >= 400:
-                        raise WebsiteFetchError("Website returned HTTP " + str(status_code), 502)
 
                     chunks = []
                     total = 0
@@ -194,6 +312,12 @@ async def extract_website(url, client=None):
             result.truncated = True
         result.char_count = len(result.text)
         result.word_count = len(result.text.split())
+        if result.content_source == "unavailable":
+            raise WebsiteFetchError(
+                "No readable content could be extracted from this page. "
+                "The site may require JavaScript or block automated requests.",
+                422,
+            )
         return result
     except (UrlValidationError, UnsafeUrlError) as exc:
         if isinstance(exc, UnsafeUrlError):
